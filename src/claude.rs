@@ -1,0 +1,184 @@
+use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Local};
+use reqwest::blocking::Client;
+use serde::Deserialize;
+use std::process::Command;
+
+const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct UsageWindow {
+    pub utilization: f64,
+    pub resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ClaudeUsageResponse {
+    pub five_hour: Option<UsageWindow>,
+    pub seven_day: Option<UsageWindow>,
+    pub seven_day_opus: Option<UsageWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageMetric {
+    pub title: String,
+    pub percentage: f64,
+    pub resets_at: Option<String>,
+    pub resets_in: String,
+    pub period_seconds: u64,
+}
+
+pub fn map_usage_response(_response: ClaudeUsageResponse) -> Vec<UsageMetric> {
+    vec![
+        metric_from_window(
+            "Current session",
+            _response.five_hour.unwrap_or_else(empty_window),
+            5 * 3600,
+        ),
+        metric_from_window(
+            "Current week (all models)",
+            _response.seven_day.unwrap_or_else(empty_window),
+            7 * 24 * 3600,
+        ),
+        metric_from_window(
+            "Current week (Fable)",
+            _response.seven_day_opus.unwrap_or_else(empty_window),
+            7 * 24 * 3600,
+        ),
+    ]
+}
+
+fn empty_window() -> UsageWindow {
+    UsageWindow {
+        utilization: 0.0,
+        resets_at: None,
+    }
+}
+
+fn metric_from_window(title: &str, window: UsageWindow, period_seconds: u64) -> UsageMetric {
+    let resets_in = format_reset_time(window.resets_at.as_deref());
+
+    UsageMetric {
+        title: title.to_string(),
+        percentage: window.utilization,
+        resets_at: window.resets_at,
+        resets_in,
+        period_seconds,
+    }
+}
+
+pub fn format_reset_time(iso_date: Option<&str>) -> String {
+    let Some(iso_date) = iso_date else {
+        return "unknown".to_string();
+    };
+
+    let Ok(parsed) = DateTime::parse_from_rfc3339(iso_date) else {
+        return "unknown".to_string();
+    };
+
+    let local = parsed.with_timezone(&Local);
+    let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "Local".to_string());
+    let date_part = if local.date_naive() == Local::now().date_naive() {
+        local.format("%-I:%M%P").to_string()
+    } else {
+        local.format("%b %-d at %-I:%M%P").to_string()
+    };
+    format!("{date_part} ({timezone})")
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ClaudeCredentials {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: Option<String>,
+    #[serde(rename = "expiresAt")]
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(rename = "subscriptionType")]
+    pub subscription_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeychainPayload {
+    #[serde(rename = "claudeAiOauth")]
+    claude_ai_oauth: Option<ClaudeCredentials>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeSnapshot {
+    pub plan: String,
+    pub metrics: Vec<UsageMetric>,
+}
+
+pub fn get_keychain_credentials() -> Result<Option<String>> {
+    let output = Command::new("security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
+        .output()
+        .context("failed to invoke macOS security command")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let raw = String::from_utf8(output.stdout).context("keychain output was not UTF-8")?;
+    Ok(Some(raw.trim().to_string()))
+}
+
+pub fn get_claude_credentials() -> Result<Option<ClaudeCredentials>> {
+    let Some(raw) = get_keychain_credentials()? else {
+        return Ok(None);
+    };
+
+    let payload: KeychainPayload =
+        serde_json::from_str(&raw).context("failed to parse Claude Code keychain payload")?;
+    Ok(payload.claude_ai_oauth)
+}
+
+pub fn fetch_usage_with_credentials(
+    credentials: &ClaudeCredentials,
+) -> Result<ClaudeUsageResponse> {
+    let response = Client::new()
+        .get(USAGE_URL)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::USER_AGENT, "agent-limit/0.1.0")
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", credentials.access_token),
+        )
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .send()
+        .context("failed to request Claude usage")?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        bail!("Claude token is expired; run `claude` to re-authenticate");
+    }
+
+    if !response.status().is_success() {
+        bail!("Claude usage API returned {}", response.status());
+    }
+
+    response
+        .json::<ClaudeUsageResponse>()
+        .context("failed to parse Claude usage response")
+}
+
+pub fn fetch_claude_snapshot() -> Result<ClaudeSnapshot> {
+    let Some(credentials) = get_claude_credentials()? else {
+        bail!("Not logged in. Run `claude` to authenticate.");
+    };
+
+    let usage = fetch_usage_with_credentials(&credentials)?;
+    let plan = credentials
+        .subscription_type
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Pro".to_string());
+
+    Ok(ClaudeSnapshot {
+        plan,
+        metrics: map_usage_response(usage),
+    })
+}
