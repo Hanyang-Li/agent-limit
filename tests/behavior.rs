@@ -3,7 +3,11 @@ use agent_limit::claude::{ClaudeUsageResponse, UsageWindow, map_usage_response};
 use agent_limit::render::{
     ProgressColor, calculate_trajectory_percent, render_progress_line, render_snapshot,
 };
-use agent_limit::terminal::normalize_raw_mode_newlines;
+use agent_limit::terminal::{
+    REFRESH_COOLDOWN, normalize_raw_mode_newlines, refresh_cooldown_remaining,
+    render_refresh_prompt,
+};
+use std::time::{Duration, Instant};
 
 #[test]
 fn interval_defaults_to_sixty_seconds() {
@@ -188,6 +192,29 @@ fn snapshot_progress_bar_width_tracks_terminal_width() {
 fn terminal_output_uses_carriage_return_newlines_for_raw_mode() {
     let normalized = normalize_raw_mode_newlines("Claude\n\nCurrent session\r\nDone\n");
     assert_eq!(normalized, "Claude\r\n\r\nCurrent session\r\nDone\r\n");
+}
+
+#[test]
+fn refresh_cooldown_blocks_until_thirty_seconds_after_usage_call() {
+    let refreshed_at = Instant::now();
+
+    assert_eq!(
+        refresh_cooldown_remaining(refreshed_at + Duration::from_secs(12), refreshed_at),
+        Some(Duration::from_secs(18))
+    );
+    assert_eq!(
+        refresh_cooldown_remaining(refreshed_at + REFRESH_COOLDOWN, refreshed_at),
+        None
+    );
+}
+
+#[test]
+fn refresh_prompt_is_gray_during_cooldown_and_green_when_ready() {
+    let cooling = render_refresh_prompt(Some(Duration::from_secs(9)));
+    assert!(cooling.contains("\u{1b}[90m[r] refresh 9s\u{1b}[0m"));
+
+    let ready = render_refresh_prompt(None);
+    assert!(ready.contains("\u{1b}[32m[r] refresh\u{1b}[0m"));
 }
 
 fn usage_metric(
