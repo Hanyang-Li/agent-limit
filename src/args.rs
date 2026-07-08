@@ -5,6 +5,7 @@ pub const DEFAULT_INTERVAL_SECONDS: u64 = 60;
 #[derive(Debug, Parser)]
 #[command(name = "agent-limit")]
 #[command(about = "Show Claude Code usage limits from local OAuth credentials")]
+#[command(version)]
 pub struct Cli {
     #[arg(
         short = 'i',

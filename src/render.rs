@@ -1,7 +1,6 @@
 use crate::claude::UsageMetric;
 use chrono::Local;
 
-const FABLE_TITLE: &str = "Current week (Fable)";
 const MIN_BAR_WIDTH: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +38,6 @@ pub fn render_progress_line(metric: &UsageMetric, width: usize, now_ms: i64) -> 
     let width = width.max(1);
     let percentage = metric.percentage.clamp(0.0, 100.0);
     let filled_count = ((percentage / 100.0) * width as f64).round() as usize;
-    let is_fable = metric.title == FABLE_TITLE;
 
     let trajectory_percent = metric
         .resets_at
@@ -59,12 +57,8 @@ pub fn render_progress_line(metric: &UsageMetric, width: usize, now_ms: i64) -> 
         }
     }
 
-    let trend_label = if is_fable {
-        String::new()
-    } else {
-        trend_label(percentage, trajectory_percent)
-    };
-    let color = progress_color(is_fable, percentage, trajectory_percent);
+    let trend_label = trend_label(percentage, trajectory_percent);
+    let color = progress_color(percentage, trajectory_percent);
 
     ProgressLine {
         bar,
@@ -85,12 +79,7 @@ pub fn render_snapshot(
     output.push_str(&format!("Last updated: {}\n", format_last_updated(now_ms)));
     output.push_str(&format!("Claude {plan}\n\n"));
 
-    let visible_metrics: Vec<_> = metrics
-        .iter()
-        .filter(|metric| metric.title != FABLE_TITLE)
-        .collect();
-
-    for (index, metric) in visible_metrics.iter().enumerate() {
+    for (index, metric) in metrics.iter().enumerate() {
         let bar_width = progress_bar_width(metric, terminal_width);
         let progress = render_progress_line(metric, bar_width, now_ms);
 
@@ -103,7 +92,7 @@ pub fn render_snapshot(
 
         output.push_str(&format!("Resets {}\n", metric.resets_in));
 
-        if index + 1 < visible_metrics.len() {
+        if index + 1 < metrics.len() {
             output.push('\n');
         }
     }
@@ -148,15 +137,7 @@ fn trend_label(percentage: f64, trajectory_percent: Option<f64>) -> String {
     }
 }
 
-fn progress_color(
-    is_fable: bool,
-    percentage: f64,
-    trajectory_percent: Option<f64>,
-) -> ProgressColor {
-    if is_fable {
-        return ProgressColor::White;
-    }
-
+fn progress_color(percentage: f64, trajectory_percent: Option<f64>) -> ProgressColor {
     match trajectory_percent {
         Some(trajectory) => {
             let delta = percentage - trajectory;

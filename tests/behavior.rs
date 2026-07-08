@@ -34,7 +34,26 @@ fn interval_rejects_values_below_sixty_seconds() {
 }
 
 #[test]
-fn usage_response_maps_three_claude_windows() {
+fn version_flags_print_package_version() {
+    for flag in ["-V", "--version"] {
+        let error =
+            parse_interval_seconds_from(["agent-limit", flag]).expect_err("version exits early");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(
+            error.to_string().contains(env!("CARGO_PKG_VERSION")),
+            "unexpected version output for {flag}: {error}"
+        );
+    }
+
+    for flag in ["-v", "--verson"] {
+        let error = parse_interval_seconds_from(["agent-limit", flag])
+            .expect_err("unsupported version alias");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+}
+
+#[test]
+fn usage_response_maps_base_claude_windows() {
     let metrics = map_usage_response(ClaudeUsageResponse {
         five_hour: Some(UsageWindow {
             utilization: 35.2,
@@ -48,34 +67,121 @@ fn usage_response_maps_three_claude_windows() {
             utilization: 0.0,
             resets_at: None,
         }),
+        model_scoped: Vec::new(),
+        limits: Vec::new(),
     });
 
-    assert_eq!(metrics.len(), 3);
+    assert_eq!(metrics.len(), 2);
     assert_eq!(metrics[0].title, "Current session");
     assert_eq!(metrics[0].percentage, 35.2);
     assert_eq!(metrics[0].period_seconds, 5 * 3600);
     assert_eq!(metrics[1].title, "Current week (all models)");
     assert_eq!(metrics[1].period_seconds, 7 * 24 * 3600);
-    assert_eq!(metrics[2].title, "Current week (Fable)");
-    assert_eq!(metrics[2].percentage, 0.0);
 }
 
 #[test]
-fn usage_response_always_renders_three_windows_when_fable_is_absent() {
+fn usage_response_renders_base_windows_when_model_scoped_is_absent() {
     let metrics = map_usage_response(ClaudeUsageResponse {
         five_hour: None,
         seven_day: None,
         seven_day_opus: None,
+        model_scoped: Vec::new(),
+        limits: Vec::new(),
     });
 
-    assert_eq!(metrics.len(), 3);
+    assert_eq!(metrics.len(), 2);
     assert_eq!(metrics[0].title, "Current session");
     assert_eq!(metrics[0].percentage, 0.0);
     assert_eq!(metrics[0].resets_in, "unknown");
     assert_eq!(metrics[1].title, "Current week (all models)");
     assert_eq!(metrics[1].percentage, 0.0);
+}
+
+#[test]
+fn usage_response_maps_all_model_scoped_windows() {
+    let response: ClaudeUsageResponse = serde_json::from_value(serde_json::json!({
+        "five_hour": {
+            "utilization": 35.0,
+            "resets_at": "2026-07-07T14:19:00+08:00"
+        },
+        "seven_day": {
+            "utilization": 5.0,
+            "resets_at": "2026-07-10T18:59:00+08:00"
+        },
+        "model_scoped": [
+            {
+                "display_name": "Fable",
+                "utilization": 12.0,
+                "resets_at": "2026-07-10T18:59:00+08:00"
+            },
+            {
+                "display_name": "Opus",
+                "utilization": 24.0,
+                "resets_at": "2026-07-11T18:59:00+08:00"
+            }
+        ]
+    }))
+    .expect("valid usage response");
+
+    let metrics = map_usage_response(response);
+
+    assert_eq!(metrics.len(), 4);
     assert_eq!(metrics[2].title, "Current week (Fable)");
-    assert_eq!(metrics[2].percentage, 0.0);
+    assert_eq!(metrics[2].percentage, 12.0);
+    assert_eq!(metrics[2].period_seconds, 7 * 24 * 3600);
+    assert_eq!(metrics[3].title, "Current week (Opus)");
+    assert_eq!(metrics[3].percentage, 24.0);
+    assert_eq!(metrics[3].period_seconds, 7 * 24 * 3600);
+}
+
+#[test]
+fn usage_response_maps_weekly_scoped_limits() {
+    let response: ClaudeUsageResponse = serde_json::from_value(serde_json::json!({
+        "five_hour": {
+            "utilization": 35.0,
+            "resets_at": "2026-07-07T14:19:00+08:00"
+        },
+        "seven_day": {
+            "utilization": 5.0,
+            "resets_at": "2026-07-10T18:59:00+08:00"
+        },
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "scope": {
+                    "model": {
+                        "display_name": "Fable"
+                    }
+                },
+                "percent": 12.0,
+                "resets_at": 1783677540
+            },
+            {
+                "kind": "weekly_scoped",
+                "scope": {
+                    "model": {
+                        "display_name": "Opus"
+                    }
+                },
+                "percent": 24.0,
+                "resets_at": "2026-07-11T18:59:00+08:00"
+            }
+        ]
+    }))
+    .expect("valid usage response");
+
+    let metrics = map_usage_response(response);
+
+    assert_eq!(metrics.len(), 4);
+    assert_eq!(metrics[2].title, "Current week (Fable)");
+    assert_eq!(metrics[2].percentage, 12.0);
+    assert!(metrics[2].resets_at.is_some());
+    assert_eq!(metrics[3].title, "Current week (Opus)");
+    assert_eq!(metrics[3].percentage, 24.0);
+    assert_eq!(
+        metrics[3].resets_at.as_deref(),
+        Some("2026-07-11T18:59:00+08:00")
+    );
 }
 
 #[test]
@@ -138,7 +244,7 @@ fn progress_line_is_red_when_usage_is_more_than_twenty_points_above_speed() {
 }
 
 #[test]
-fn snapshot_omits_fable_progress_line() {
+fn snapshot_renders_model_scoped_progress_lines() {
     let metrics = vec![
         usage_metric(
             "Current session",
@@ -152,11 +258,17 @@ fn snapshot_omits_fable_progress_line() {
             Some(1_000_000 + 3_600_000),
             2 * 3600,
         ),
-        usage_metric("Current week (Fable)", 0.0, None, 7 * 24 * 3600),
+        usage_metric(
+            "Current week (Fable)",
+            25.0,
+            Some(1_000_000 + 3_600_000),
+            7 * 24 * 3600,
+        ),
     ];
 
     let output = render_snapshot("team", &metrics, 1_000_000, 80);
-    assert!(!output.contains("Current week (Fable)"));
+    assert!(output.contains("Current week (Fable)\n"));
+    assert!(output.contains("25% used"));
 }
 
 #[test]

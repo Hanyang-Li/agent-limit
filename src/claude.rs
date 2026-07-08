@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use serde_json::Value;
 use std::process::Command;
 
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
@@ -14,10 +15,39 @@ pub struct UsageWindow {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ModelScopedUsageWindow {
+    pub display_name: String,
+    pub utilization: Option<f64>,
+    pub resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct UsageLimit {
+    pub kind: String,
+    pub scope: Option<UsageLimitScope>,
+    pub percent: Option<f64>,
+    pub resets_at: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct UsageLimitScope {
+    pub model: Option<UsageLimitModelScope>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct UsageLimitModelScope {
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ClaudeUsageResponse {
     pub five_hour: Option<UsageWindow>,
     pub seven_day: Option<UsageWindow>,
     pub seven_day_opus: Option<UsageWindow>,
+    #[serde(default)]
+    pub model_scoped: Vec<ModelScopedUsageWindow>,
+    #[serde(default)]
+    pub limits: Vec<UsageLimit>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,24 +59,60 @@ pub struct UsageMetric {
     pub period_seconds: u64,
 }
 
-pub fn map_usage_response(_response: ClaudeUsageResponse) -> Vec<UsageMetric> {
-    vec![
+pub fn map_usage_response(response: ClaudeUsageResponse) -> Vec<UsageMetric> {
+    let mut metrics = vec![
         metric_from_window(
             "Current session",
-            _response.five_hour.unwrap_or_else(empty_window),
+            response.five_hour.unwrap_or_else(empty_window),
             5 * 3600,
         ),
         metric_from_window(
             "Current week (all models)",
-            _response.seven_day.unwrap_or_else(empty_window),
+            response.seven_day.unwrap_or_else(empty_window),
             7 * 24 * 3600,
         ),
-        metric_from_window(
-            "Current week (Fable)",
-            _response.seven_day_opus.unwrap_or_else(empty_window),
+    ];
+
+    metrics.extend(response.model_scoped.into_iter().filter_map(|window| {
+        let display_name = window.display_name.trim();
+        let utilization = window.utilization?;
+        if display_name.is_empty() {
+            return None;
+        }
+
+        Some(metric_from_window(
+            &format!("Current week ({display_name})"),
+            UsageWindow {
+                utilization,
+                resets_at: window.resets_at,
+            },
             7 * 24 * 3600,
-        ),
-    ]
+        ))
+    }));
+
+    metrics.extend(response.limits.into_iter().filter_map(|limit| {
+        if limit.kind != "weekly_scoped" {
+            return None;
+        }
+
+        let display_name = limit.scope?.model?.display_name;
+        let display_name = display_name.trim();
+        let utilization = limit.percent?;
+        if display_name.is_empty() {
+            return None;
+        }
+
+        Some(metric_from_window(
+            &format!("Current week ({display_name})"),
+            UsageWindow {
+                utilization,
+                resets_at: reset_value_to_string(limit.resets_at),
+            },
+            7 * 24 * 3600,
+        ))
+    }));
+
+    metrics
 }
 
 fn empty_window() -> UsageWindow {
@@ -65,6 +131,17 @@ fn metric_from_window(title: &str, window: UsageWindow, period_seconds: u64) -> 
         resets_at: window.resets_at,
         resets_in,
         period_seconds,
+    }
+}
+
+fn reset_value_to_string(value: Option<Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => Some(value),
+        Value::Number(value) => value
+            .as_i64()
+            .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
+            .map(|date| date.to_rfc3339()),
+        _ => None,
     }
 }
 
