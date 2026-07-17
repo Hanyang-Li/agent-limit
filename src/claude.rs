@@ -1,3 +1,4 @@
+use crate::provider::{Provider, ProviderSnapshot};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local};
 use reqwest::blocking::Client;
@@ -221,7 +222,10 @@ pub fn fetch_usage_with_credentials(
         .get(USAGE_URL)
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::USER_AGENT, "agent-limit/0.1.0")
+        .header(
+            reqwest::header::USER_AGENT,
+            concat!("agent-limit/", env!("CARGO_PKG_VERSION")),
+        )
         .header(
             reqwest::header::AUTHORIZATION,
             format!("Bearer {}", credentials.access_token),
@@ -258,4 +262,21 @@ pub fn fetch_claude_snapshot() -> Result<ClaudeSnapshot> {
         plan,
         metrics: map_usage_response(usage),
     })
+}
+
+pub fn claude_snapshot_from_parts(plan: String, metrics: Vec<UsageMetric>) -> ProviderSnapshot {
+    ProviderSnapshot {
+        provider: Provider::Claude,
+        plan,
+        metrics,
+    }
+}
+
+pub fn is_claude_available() -> bool {
+    matches!(get_claude_credentials(), Ok(Some(_)))
+}
+
+pub fn fetch_claude_provider_snapshot() -> Result<ProviderSnapshot> {
+    let snapshot = fetch_claude_snapshot()?;
+    Ok(claude_snapshot_from_parts(snapshot.plan, snapshot.metrics))
 }

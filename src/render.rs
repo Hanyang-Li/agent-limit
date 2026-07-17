@@ -1,4 +1,5 @@
 use crate::claude::UsageMetric;
+use crate::provider::Provider;
 use chrono::Local;
 
 const MIN_BAR_WIDTH: usize = 8;
@@ -68,38 +69,6 @@ pub fn render_progress_line(metric: &UsageMetric, width: usize, now_ms: i64) -> 
     }
 }
 
-pub fn render_snapshot(
-    plan: &str,
-    metrics: &[UsageMetric],
-    now_ms: i64,
-    terminal_width: u16,
-) -> String {
-    let terminal_width = usize::from(terminal_width).max(MIN_BAR_WIDTH);
-    let mut output = String::new();
-    output.push_str(&format!("Last updated: {}\n", format_last_updated(now_ms)));
-    output.push_str(&format!("Claude {plan}\n\n"));
-
-    for (index, metric) in metrics.iter().enumerate() {
-        let bar_width = progress_bar_width(metric, terminal_width);
-        let progress = render_progress_line(metric, bar_width, now_ms);
-
-        output.push_str(&metric.title);
-        output.push('\n');
-        output.push_str(&colorize_progress_line(
-            &format_progress_line(&progress),
-            progress.color,
-        ));
-
-        output.push_str(&format!("Resets {}\n", metric.resets_in));
-
-        if index + 1 < metrics.len() {
-            output.push('\n');
-        }
-    }
-
-    output
-}
-
 fn progress_bar_width(metric: &UsageMetric, terminal_width: usize) -> usize {
     let percentage_label = format!(
         "{}% used",
@@ -153,16 +122,6 @@ fn progress_color(percentage: f64, trajectory_percent: Option<f64>) -> ProgressC
     }
 }
 
-fn format_last_updated(now_ms: i64) -> String {
-    let Some(updated_at) = chrono::DateTime::from_timestamp_millis(now_ms) else {
-        return "unknown".to_string();
-    };
-
-    let local = updated_at.with_timezone(&Local);
-    let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "Local".to_string());
-    format!("{} ({timezone})", local.format("%-I:%M%P"))
-}
-
 fn colorize_progress_line(line: &str, color: ProgressColor) -> String {
     let start = match color {
         ProgressColor::Green => "\u{1b}[32m",
@@ -176,4 +135,162 @@ fn colorize_progress_line(line: &str, color: ProgressColor) -> String {
     } else {
         format!("{start}{line}\u{1b}[0m")
     }
+}
+
+pub fn format_frequency(seconds: u64) -> String {
+    if seconds == 0 {
+        return "0s".to_string();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    let mut out = String::new();
+    if hours > 0 {
+        out.push_str(&format!("{hours}h"));
+    }
+    if minutes > 0 {
+        out.push_str(&format!("{minutes}m"));
+    }
+    if secs > 0 {
+        out.push_str(&format!("{secs}s"));
+    }
+    out
+}
+
+pub fn format_header(updated_at_ms: Option<i64>, secs_ago: u64, interval_seconds: u64) -> String {
+    let frequency = format_frequency(interval_seconds);
+    match updated_at_ms {
+        None => format!("Fetching… · every {frequency}"),
+        Some(updated_at_ms) => {
+            let time = format_clock(updated_at_ms);
+            format!("Updated {time} · {secs_ago}s ago · every {frequency}")
+        }
+    }
+}
+
+fn format_clock(now_ms: i64) -> String {
+    let Some(updated_at) = chrono::DateTime::from_timestamp_millis(now_ms) else {
+        return "unknown".to_string();
+    };
+    let local = updated_at.with_timezone(&Local);
+    let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "Local".to_string());
+    format!("{} ({timezone})", local.format("%H:%M:%S"))
+}
+
+pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
+    if providers.len() <= 1 {
+        return None;
+    }
+    let mut bar = String::new();
+    for (index, provider) in providers.iter().enumerate() {
+        if index > 0 {
+            bar.push_str("  ");
+        }
+        let label = format!(" {provider} ");
+        if index == active {
+            bar.push_str(&format!("\u{1b}[7m{label}\u{1b}[0m"));
+        } else {
+            bar.push_str(&label);
+        }
+    }
+    Some(bar)
+}
+
+pub fn visible_width(text: &str) -> usize {
+    let mut width = 0usize;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if code == 'm' {
+                    break;
+                }
+            }
+        } else {
+            width += 1;
+        }
+    }
+    width
+}
+
+/// Truncate `text` to at most `max` visible columns (ANSI escape sequences are
+/// copied through without counting), appending an ellipsis + reset when cut.
+fn truncate_visible(text: &str, max: usize) -> String {
+    if visible_width(text) <= max {
+        return text.to_string();
+    }
+    let keep = max.saturating_sub(1); // room for the ellipsis
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            out.push(ch);
+            if let Some(bracket) = chars.next() {
+                out.push(bracket);
+            }
+            for code in chars.by_ref() {
+                out.push(code);
+                if code == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if count >= keep {
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    out.push('…');
+    out.push_str("\u{1b}[0m"); // avoid color bleed if we cut mid-sequence
+    out
+}
+
+pub fn render_box(title: &str, body_lines: &[String], inner_width: usize) -> String {
+    // Truncate the title so the top border matches the body/bottom width.
+    // Reserve one column for the space between the title and the dash run.
+    let max_title = inner_width.saturating_sub(1);
+    let title: String = if title.chars().count() > max_title {
+        let keep = max_title.saturating_sub(1);
+        format!("{}…", title.chars().take(keep).collect::<String>())
+    } else {
+        title.to_string()
+    };
+    let title_len = title.chars().count();
+    // total visible width = inner_width + 4 ("╭─ " + title + " " + dashes + "╮")
+    let dashes = inner_width.saturating_sub(title_len + 1);
+    let mut out = String::new();
+    out.push_str(&format!("╭─ {title} {}╮\n", "─".repeat(dashes)));
+    for line in body_lines {
+        let line = truncate_visible(line, inner_width);
+        let pad = inner_width.saturating_sub(visible_width(&line));
+        out.push_str(&format!("│ {line}{} │\n", " ".repeat(pad)));
+    }
+    out.push_str(&format!("╰{}╯\n", "─".repeat(inner_width + 2)));
+    out
+}
+
+pub fn render_provider_body(
+    metrics: &[UsageMetric],
+    now_ms: i64,
+    inner_width: usize,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (index, metric) in metrics.iter().enumerate() {
+        let bar_width = progress_bar_width(metric, inner_width);
+        let progress = render_progress_line(metric, bar_width, now_ms);
+        lines.push(metric.title.clone());
+        lines.push(colorize_progress_line(
+            format_progress_line(&progress).trim_end_matches('\n'),
+            progress.color,
+        ));
+        lines.push(format!("Resets {}", metric.resets_in));
+        if index + 1 < metrics.len() {
+            lines.push(String::new());
+        }
+    }
+    lines
 }

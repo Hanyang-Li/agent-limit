@@ -1,4 +1,4 @@
 fn main() -> anyhow::Result<()> {
-    let interval = agent_limit::args::parse_interval_seconds();
-    agent_limit::terminal::run(interval)
+    let options = agent_limit::args::parse_options();
+    agent_limit::terminal::run(options.interval, options.provider)
 }
