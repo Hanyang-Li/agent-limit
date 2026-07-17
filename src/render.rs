@@ -7,14 +7,10 @@ const MIN_BAR_WIDTH: usize = 8;
 const RESET: &str = "\u{1b}[0m";
 const BOLD: &str = "\u{1b}[1m";
 const NOT_BOLD: &str = "\u{1b}[22m";
-const WHITE_FG: &str = "\u{1b}[97m";
+const REVERSE: &str = "\u{1b}[7m";
 
 fn fg_color((r, g, b): (u8, u8, u8)) -> String {
     format!("\u{1b}[38;2;{r};{g};{b}m")
-}
-
-fn bg_color((r, g, b): (u8, u8, u8)) -> String {
-    format!("\u{1b}[48;2;{r};{g};{b}m")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,9 +200,11 @@ pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
         }
         let label = format!(" {provider} ");
         if index == active {
-            // Selected tab: brand color background with white text.
-            bar.push_str(&bg_color(provider.color()));
-            bar.push_str(WHITE_FG);
+            // Selected tab: a solid brand-color block with knocked-out letters
+            // (reverse-video on the brand color shows the terminal background
+            // through the text).
+            bar.push_str(&fg_color(provider.color()));
+            bar.push_str(REVERSE);
             bar.push_str(&label);
             bar.push_str(RESET);
         } else {

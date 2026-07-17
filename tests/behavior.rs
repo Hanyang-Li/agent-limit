@@ -530,19 +530,16 @@ fn tab_bar_absent_for_single_provider_and_highlights_active() {
         .expect("tab bar for two providers");
     assert!(bar.contains("Claude"));
     assert!(bar.contains("Kimi"));
-    // Active tab (Kimi, index 1) uses its brand color #66A6F8 as background
-    // with white (not gray/black) text.
+    // Active tab (Kimi, index 1) is a knockout: brand color #66A6F8 as the
+    // foreground plus reverse-video, so the block is brand-colored and the
+    // letters show the terminal background.
     assert!(
-        bar.contains("\u{1b}[48;2;102;166;248m"),
-        "active tab should have brand background, got: {bar:?}"
+        bar.contains("\u{1b}[38;2;102;166;248m"),
+        "active tab should use the brand color, got: {bar:?}"
     );
     assert!(
-        bar.contains("\u{1b}[97m"),
-        "active tab text should be white, got: {bar:?}"
-    );
-    assert!(
-        !bar.contains("\u{1b}[30m"),
-        "active tab text should not be black, got: {bar:?}"
+        bar.contains("\u{1b}[7m"),
+        "active tab should use reverse-video (knockout), got: {bar:?}"
     );
 }
 
