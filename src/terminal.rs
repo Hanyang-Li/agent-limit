@@ -192,7 +192,12 @@ fn draw(
             message.lines().map(|l| l.to_string()).collect(),
         ),
     };
-    screen.push_str(&render_box(&title, &body_lines, inner_width));
+    screen.push_str(&render_box(
+        &title,
+        &body_lines,
+        inner_width,
+        providers[active].color(),
+    ));
 
     let cooldown =
         tab_fetched_at(&tabs[active]).and_then(|at| refresh_cooldown_remaining(Instant::now(), at));

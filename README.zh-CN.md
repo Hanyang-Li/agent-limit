@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Hanyang-Li/agent-limit/main/install
 或使用 Cargo 安装：
 
 ```sh
-cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.1 --locked
+cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.2 --locked
 ```
 
 ## 使用

@@ -4,6 +4,19 @@ use chrono::Local;
 
 const MIN_BAR_WIDTH: usize = 8;
 
+const RESET: &str = "\u{1b}[0m";
+const BOLD: &str = "\u{1b}[1m";
+const NOT_BOLD: &str = "\u{1b}[22m";
+const BLACK_FG: &str = "\u{1b}[30m";
+
+fn fg_color((r, g, b): (u8, u8, u8)) -> String {
+    format!("\u{1b}[38;2;{r};{g};{b}m")
+}
+
+fn bg_color((r, g, b): (u8, u8, u8)) -> String {
+    format!("\u{1b}[48;2;{r};{g};{b}m")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProgressLine {
     pub bar: String,
@@ -137,6 +150,8 @@ fn colorize_progress_line(line: &str, color: ProgressColor) -> String {
     }
 }
 
+/// Humanize a second count into space-separated h/m/s units (largest unit is
+/// hours), dropping zero components, e.g. 300 → "5m", 3661 → "1h 1m 1s".
 pub fn format_frequency(seconds: u64) -> String {
     if seconds == 0 {
         return "0s".to_string();
@@ -144,17 +159,17 @@ pub fn format_frequency(seconds: u64) -> String {
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;
     let secs = seconds % 60;
-    let mut out = String::new();
+    let mut parts = Vec::new();
     if hours > 0 {
-        out.push_str(&format!("{hours}h"));
+        parts.push(format!("{hours}h"));
     }
     if minutes > 0 {
-        out.push_str(&format!("{minutes}m"));
+        parts.push(format!("{minutes}m"));
     }
     if secs > 0 {
-        out.push_str(&format!("{secs}s"));
+        parts.push(format!("{secs}s"));
     }
-    out
+    parts.join(" ")
 }
 
 pub fn format_header(updated_at_ms: Option<i64>, secs_ago: u64, interval_seconds: u64) -> String {
@@ -163,7 +178,8 @@ pub fn format_header(updated_at_ms: Option<i64>, secs_ago: u64, interval_seconds
         None => format!("Fetching… · every {frequency}"),
         Some(updated_at_ms) => {
             let time = format_clock(updated_at_ms);
-            format!("Updated {time} · {secs_ago}s ago · every {frequency}")
+            let ago = format_frequency(secs_ago);
+            format!("Updated {time} · {ago} ago · every {frequency}")
         }
     }
 }
@@ -188,7 +204,11 @@ pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
         }
         let label = format!(" {provider} ");
         if index == active {
-            bar.push_str(&format!("\u{1b}[7m{label}\u{1b}[0m"));
+            // Selected tab: brand color background with black text.
+            bar.push_str(&bg_color(provider.color()));
+            bar.push_str(BLACK_FG);
+            bar.push_str(&label);
+            bar.push_str(RESET);
         } else {
             bar.push_str(&label);
         }
@@ -249,7 +269,16 @@ fn truncate_visible(text: &str, max: usize) -> String {
     out
 }
 
-pub fn render_box(title: &str, body_lines: &[String], inner_width: usize) -> String {
+/// Frame `body_lines` in a rounded box whose border and title are drawn in the
+/// given brand `color` (title additionally bold). Every rendered line has equal
+/// visible width (`inner_width + 4`); the title is truncated to fit.
+pub fn render_box(
+    title: &str,
+    body_lines: &[String],
+    inner_width: usize,
+    color: (u8, u8, u8),
+) -> String {
+    let c = fg_color(color);
     // Truncate the title so the top border matches the body/bottom width.
     // Reserve one column for the space between the title and the dash run.
     let max_title = inner_width.saturating_sub(1);
@@ -263,13 +292,43 @@ pub fn render_box(title: &str, body_lines: &[String], inner_width: usize) -> Str
     // total visible width = inner_width + 4 ("╭─ " + title + " " + dashes + "╮")
     let dashes = inner_width.saturating_sub(title_len + 1);
     let mut out = String::new();
-    out.push_str(&format!("╭─ {title} {}╮\n", "─".repeat(dashes)));
+
+    // Top border: colored line, bold title.
+    out.push_str(&c);
+    out.push_str("╭─ ");
+    out.push_str(BOLD);
+    out.push_str(&title);
+    out.push_str(NOT_BOLD);
+    out.push(' ');
+    out.push_str(&"─".repeat(dashes));
+    out.push('╮');
+    out.push_str(RESET);
+    out.push('\n');
+
+    // Body: colored side borders, content keeps its own colors.
     for line in body_lines {
         let line = truncate_visible(line, inner_width);
         let pad = inner_width.saturating_sub(visible_width(&line));
-        out.push_str(&format!("│ {line}{} │\n", " ".repeat(pad)));
+        out.push_str(&c);
+        out.push('│');
+        out.push_str(RESET);
+        out.push(' ');
+        out.push_str(&line);
+        out.push_str(&" ".repeat(pad));
+        out.push(' ');
+        out.push_str(&c);
+        out.push('│');
+        out.push_str(RESET);
+        out.push('\n');
     }
-    out.push_str(&format!("╰{}╯\n", "─".repeat(inner_width + 2)));
+
+    // Bottom border.
+    out.push_str(&c);
+    out.push('╰');
+    out.push_str(&"─".repeat(inner_width + 2));
+    out.push('╯');
+    out.push_str(RESET);
+    out.push('\n');
     out
 }
 

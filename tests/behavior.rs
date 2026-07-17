@@ -494,9 +494,10 @@ use agent_limit::render::{
 #[test]
 fn frequency_is_humanized() {
     assert_eq!(format_frequency(300), "5m");
-    assert_eq!(format_frequency(90), "1m30s");
+    assert_eq!(format_frequency(90), "1m 30s");
     assert_eq!(format_frequency(45), "45s");
     assert_eq!(format_frequency(3600), "1h");
+    assert_eq!(format_frequency(3661), "1h 1m 1s");
 }
 
 #[test]
@@ -505,6 +506,13 @@ fn header_shows_updated_ago_and_frequency() {
     assert!(header.contains("Updated "));
     assert!(header.contains("12s ago"));
     assert!(header.contains("every 5m"));
+}
+
+#[test]
+fn header_humanizes_large_ago_with_units() {
+    // 3661s → "1h 1m 1s"; largest unit is hours.
+    let header = format_header(Some(1_000_000), 3_661, 300);
+    assert!(header.contains("1h 1m 1s ago"), "got: {header}");
 }
 
 #[test]
@@ -522,7 +530,11 @@ fn tab_bar_absent_for_single_provider_and_highlights_active() {
         .expect("tab bar for two providers");
     assert!(bar.contains("Claude"));
     assert!(bar.contains("Kimi"));
-    assert!(bar.contains("\u{1b}[7m")); // active tab reverse-video
+    // Active tab (Kimi, index 1) uses its brand color #66A6F8 as background.
+    assert!(
+        bar.contains("\u{1b}[48;2;102;166;248m"),
+        "active tab should have brand background, got: {bar:?}"
+    );
 }
 
 #[test]
@@ -530,16 +542,26 @@ fn visible_width_ignores_ansi_codes() {
     assert_eq!(visible_width("\u{1b}[32m█████\u{1b}[0m"), 5);
 }
 
+const CLAUDE_RGB: (u8, u8, u8) = (0xCA, 0x7C, 0x5E);
+const KIMI_RGB: (u8, u8, u8) = (0x66, 0xA6, 0xF8);
+
 #[test]
 fn render_box_frames_body_to_inner_width() {
-    let out = render_box("Claude · Max", &["hello".to_string()], 20);
+    let out = render_box("Claude · Max", &["hello".to_string()], 20, CLAUDE_RGB);
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines[0].starts_with("╭─ Claude · Max "));
-    assert!(lines[0].ends_with("╮"));
-    assert!(lines[1].starts_with("│ hello"));
-    assert!(lines[1].ends_with("│"));
-    assert!(lines.last().unwrap().starts_with("╰"));
-    assert!(lines.last().unwrap().ends_with("╯"));
+    assert!(out.contains("╭─ "));
+    assert!(out.contains("Claude · Max"));
+    assert!(out.contains("hello"));
+    assert!(lines[0].contains('╮'));
+    assert!(lines.last().unwrap().contains('╰'));
+    assert!(lines.last().unwrap().contains('╯'));
+    // Border drawn in the brand color, title bold.
+    assert!(
+        lines[0].contains("\u{1b}[38;2;202;124;94m"),
+        "border should use brand color: {:?}",
+        lines[0]
+    );
+    assert!(lines[0].contains("\u{1b}[1m"), "title should be bold");
     // every rendered line has equal visible width
     let width = visible_width(lines[0]);
     for line in &lines {
@@ -551,26 +573,30 @@ fn render_box_frames_body_to_inner_width() {
 fn render_box_keeps_equal_width_when_title_exceeds_inner_width() {
     // Title (12 chars) is far longer than inner_width (5) — must be truncated
     // with an ellipsis so every rendered line still has equal visible width.
-    let out = render_box("Claude · Max", &["hi".to_string()], 5);
+    let out = render_box("Claude · Max", &["hi".to_string()], 5, CLAUDE_RGB);
     let lines: Vec<&str> = out.lines().collect();
     let width = visible_width(lines[0]);
     for line in &lines {
         assert_eq!(visible_width(line), width, "line width mismatch: {line:?}");
     }
     assert!(
-        lines[0].contains('…'),
-        "long title should be ellipsized: {:?}",
-        lines[0]
+        out.contains('…'),
+        "long title should be ellipsized: {out:?}"
     );
-    assert!(lines[0].starts_with("╭─ "));
-    assert!(lines[0].ends_with("╮"));
+    assert!(out.contains("╭─ "));
+    assert!(lines[0].contains('╮'));
 }
 
 #[test]
 fn render_box_keeps_equal_width_when_body_line_overflows() {
     // Body line (25 visible chars) is wider than inner_width (10) and must be
     // truncated so every rendered line keeps equal visible width.
-    let out = render_box("Kimi", &["Current week (all models)".to_string()], 10);
+    let out = render_box(
+        "Kimi",
+        &["Current week (all models)".to_string()],
+        10,
+        KIMI_RGB,
+    );
     let lines: Vec<&str> = out.lines().collect();
     let width = visible_width(lines[0]);
     for line in &lines {

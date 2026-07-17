@@ -7,6 +7,16 @@ pub enum Provider {
     Kimi,
 }
 
+impl Provider {
+    /// Brand color as an (r, g, b) triple, for terminal truecolor styling.
+    pub fn color(&self) -> (u8, u8, u8) {
+        match self {
+            Provider::Claude => (0xCA, 0x7C, 0x5E),
+            Provider::Kimi => (0x66, 0xA6, 0xF8),
+        }
+    }
+}
+
 impl std::fmt::Display for Provider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {

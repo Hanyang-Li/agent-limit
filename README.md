@@ -47,7 +47,7 @@ or `AGENT_LIMIT_INSTALL_DIR`.
 Or install with Cargo:
 
 ```sh
-cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.1 --locked
+cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.2 --locked
 ```
 
 ## Usage
