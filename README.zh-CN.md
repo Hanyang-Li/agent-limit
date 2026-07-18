@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Hanyang-Li/agent-limit/main/install
 或使用 Cargo 安装：
 
 ```sh
-cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.2 --locked
+cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.3 --locked
 ```
 
 ## 使用
@@ -74,6 +74,8 @@ agent-limit -p kimi -i 120
 | `h` / `←`、`l` / `→` | 切换标签页（两个 provider 都存在时） |
 | `R` | 立即刷新当前标签页（有短暂冷却） |
 | `Q` | 退出（`Esc` 与 `Ctrl+C` 也可退出） |
+
+也支持**鼠标**：点击标签页即可切换，点击右下角的 **[R]efresh** / **[Q]uit** 即可刷新 / 退出。
 
 ## 开发
 

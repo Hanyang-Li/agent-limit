@@ -6,7 +6,6 @@ use agent_limit::provider::Provider as ArgProvider;
 use agent_limit::render::{ProgressColor, calculate_trajectory_percent, render_progress_line};
 use agent_limit::terminal::{
     REFRESH_COOLDOWN, normalize_raw_mode_newlines, refresh_cooldown_remaining,
-    render_refresh_prompt,
 };
 use std::time::{Duration, Instant};
 
@@ -286,17 +285,6 @@ fn refresh_cooldown_blocks_until_thirty_seconds_after_usage_call() {
     );
 }
 
-#[test]
-fn refresh_prompt_is_gray_during_cooldown_and_green_when_ready() {
-    let cooling = render_refresh_prompt(Some(Duration::from_secs(9)));
-    assert!(cooling.contains("\u{1b}[90m[R]efresh 9s\u{1b}[0m"));
-    assert!(cooling.contains("[Q]uit"));
-
-    let ready = render_refresh_prompt(None);
-    assert!(ready.contains("\u{1b}[32m[R]efresh\u{1b}[0m"));
-    assert!(ready.contains("[Q]uit"));
-}
-
 use agent_limit::claude::claude_snapshot_from_parts;
 use agent_limit::provider::Provider as ClaudeProvider;
 
@@ -487,8 +475,8 @@ fn refresh_request_form_has_client_id_and_grant() {
 
 use agent_limit::provider::Provider as RenderProvider;
 use agent_limit::render::{
-    format_frequency, format_header, render_box, render_provider_body, render_tab_bar,
-    visible_width,
+    format_frequency, format_header, render_box, render_footer, render_provider_body,
+    render_tab_bar, tab_bar_layout, visible_width,
 };
 
 #[test]
@@ -541,6 +529,40 @@ fn tab_bar_absent_for_single_provider_and_highlights_active() {
         bar.contains("\u{1b}[7m"),
         "active tab should use reverse-video (knockout), got: {bar:?}"
     );
+}
+
+#[test]
+fn tab_bar_layout_reports_click_spans() {
+    assert!(tab_bar_layout(&[RenderProvider::Claude], 0).is_none());
+
+    let (bar, spans) =
+        tab_bar_layout(&[RenderProvider::Claude, RenderProvider::Kimi], 0).expect("two providers");
+    assert_eq!(spans.len(), 2);
+    // " Claude " occupies columns [0, 8).
+    assert_eq!((spans[0].index, spans[0].start, spans[0].end), (0, 0, 8));
+    // Two-space gap, then " Kimi " at [10, 16).
+    assert_eq!((spans[1].index, spans[1].start, spans[1].end), (1, 10, 16));
+    assert!(bar.contains("Claude") && bar.contains("Kimi"));
+}
+
+#[test]
+fn footer_is_right_aligned_with_click_spans() {
+    let footer = render_footer(40, None);
+    // "[R]efresh"=9, gap=3, "[Q]uit"=6 → visible 18, pad 22, quit ends at width.
+    assert_eq!(footer.refresh, (22, 31));
+    assert_eq!(footer.quit, (34, 40));
+    assert!(footer.line.contains("[R]efresh"));
+    assert!(footer.line.contains("[Q]uit"));
+    assert_eq!(visible_width(&footer.line), 40);
+}
+
+#[test]
+fn footer_cooldown_shifts_alignment_and_shows_seconds() {
+    let footer = render_footer(40, Some(12));
+    // "[R]efresh 12s"=13, gap=3, "[Q]uit"=6 → visible 22, pad 18.
+    assert_eq!(footer.refresh, (18, 31));
+    assert_eq!(footer.quit, (34, 40));
+    assert!(footer.line.contains("[R]efresh 12s"));
 }
 
 #[test]

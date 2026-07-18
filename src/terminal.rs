@@ -3,11 +3,16 @@ use crate::kimi::{fetch_kimi_snapshot, is_kimi_available};
 use crate::provider::{
     Provider, ProviderSnapshot, TabState, available_providers, initial_active_index,
 };
-use crate::render::{format_header, render_box, render_provider_body, render_tab_bar};
+use crate::render::{
+    TabSpan, format_header, render_box, render_footer, render_provider_body, tab_bar_layout,
+};
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+    MouseEventKind,
+};
 use crossterm::terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use crossterm::{execute, queue};
 use std::io::{Write, stdout};
@@ -21,13 +26,47 @@ struct RawModeGuard;
 impl RawModeGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
+        execute!(stdout(), EnableMouseCapture)?;
         Ok(Self)
     }
 }
 
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
+        let _ = execute!(stdout(), DisableMouseCapture);
         let _ = disable_raw_mode();
+    }
+}
+
+/// Clickable regions of the current frame, in terminal cell coordinates.
+#[derive(Default)]
+struct ClickMap {
+    has_tabs: bool,
+    tab_row: u16,
+    tabs: Vec<TabSpan>,
+    has_footer: bool,
+    footer_row: u16,
+    refresh: (u16, u16),
+    quit: (u16, u16),
+}
+
+impl ClickMap {
+    fn tab_at(&self, col: u16, row: u16) -> Option<usize> {
+        if !self.has_tabs || row != self.tab_row {
+            return None;
+        }
+        self.tabs
+            .iter()
+            .find(|span| col >= span.start && col < span.end)
+            .map(|span| span.index)
+    }
+
+    fn is_refresh(&self, col: u16, row: u16) -> bool {
+        self.has_footer && row == self.footer_row && col >= self.refresh.0 && col < self.refresh.1
+    }
+
+    fn is_quit(&self, col: u16, row: u16) -> bool {
+        self.has_footer && row == self.footer_row && col >= self.quit.0 && col < self.quit.1
     }
 }
 
@@ -72,7 +111,7 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
 
     // Startup: fetch active tab.
     tabs[active] = refresh_tab(providers[active]);
-    draw(&mut out, &providers, active, &tabs, interval)?;
+    let mut click = draw(&mut out, &providers, active, &tabs, interval)?;
 
     let mut last_tick_secs = None;
     loop {
@@ -80,50 +119,88 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
         let elapsed = tab_elapsed(&tabs[active]);
         if should_fetch(elapsed, interval) && !matches!(tabs[active], TabState::Empty) {
             tabs[active] = refresh_tab(providers[active]);
-            draw(&mut out, &providers, active, &tabs, interval)?;
+            click = draw(&mut out, &providers, active, &tabs, interval)?;
         }
 
         // Re-draw ~1s for the "N s ago" and cooldown countdown.
         let tick = tab_secs_ago(&tabs[active]);
         if tick != last_tick_secs {
-            draw(&mut out, &providers, active, &tabs, interval)?;
+            click = draw(&mut out, &providers, active, &tabs, interval)?;
             last_tick_secs = tick;
         }
 
-        if event::poll(Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
-        {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                KeyCode::Char('h') | KeyCode::Left => {
-                    active = (active + providers.len() - 1) % providers.len();
-                    maybe_fetch_on_switch(&mut tabs, active, providers[active], interval);
-                    draw(&mut out, &providers, active, &tabs, interval)?;
-                }
-                KeyCode::Char('l') | KeyCode::Right => {
-                    active = (active + 1) % providers.len();
-                    maybe_fetch_on_switch(&mut tabs, active, providers[active], interval);
-                    draw(&mut out, &providers, active, &tabs, interval)?;
-                }
-                KeyCode::Char('r') | KeyCode::Char('R') => {
-                    // Manual refresh respects the 30s cooldown; if the tab has
-                    // never fetched, allow immediately (no fetched_at to gate on).
-                    let on_cooldown = tab_fetched_at(&tabs[active])
-                        .and_then(|at| refresh_cooldown_remaining(Instant::now(), at))
-                        .is_some();
-                    if !on_cooldown {
-                        tabs[active] = refresh_tab(providers[active]);
+        if event::poll(Duration::from_millis(250))? {
+            let mut dirty = false;
+            match event::read()? {
+                Event::Key(key) => match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        let next = (active + providers.len() - 1) % providers.len();
+                        switch_tab(&mut tabs, &mut active, &providers, next, interval);
+                        dirty = true;
                     }
-                    draw(&mut out, &providers, active, &tabs, interval)?;
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        let next = (active + 1) % providers.len();
+                        switch_tab(&mut tabs, &mut active, &providers, next, interval);
+                        dirty = true;
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        manual_refresh(&mut tabs, active, &providers);
+                        dirty = true;
+                    }
+                    _ => {}
+                },
+                Event::Mouse(mouse) => {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        let (col, row) = (mouse.column, mouse.row);
+                        if click.is_quit(col, row) {
+                            break;
+                        } else if click.is_refresh(col, row) {
+                            manual_refresh(&mut tabs, active, &providers);
+                            dirty = true;
+                        } else if let Some(index) = click.tab_at(col, row) {
+                            if index != active {
+                                switch_tab(&mut tabs, &mut active, &providers, index, interval);
+                            }
+                            dirty = true;
+                        }
+                    }
                 }
                 _ => {}
+            }
+
+            if dirty {
+                click = draw(&mut out, &providers, active, &tabs, interval)?;
+                last_tick_secs = tab_secs_ago(&tabs[active]);
             }
         }
     }
 
     execute!(out, Clear(ClearType::All), MoveTo(0, 0))?;
     Ok(())
+}
+
+fn switch_tab(
+    tabs: &mut [TabState],
+    active: &mut usize,
+    providers: &[Provider],
+    next: usize,
+    interval: Duration,
+) {
+    *active = next;
+    maybe_fetch_on_switch(tabs, *active, providers[*active], interval);
+}
+
+/// Manual refresh respects the 30s cooldown; if the tab has never fetched, it
+/// refreshes immediately (no fetched_at to gate on).
+fn manual_refresh(tabs: &mut [TabState], active: usize, providers: &[Provider]) {
+    let on_cooldown = tab_fetched_at(&tabs[active])
+        .and_then(|at| refresh_cooldown_remaining(Instant::now(), at))
+        .is_some();
+    if !on_cooldown {
+        tabs[active] = refresh_tab(providers[active]);
+    }
 }
 
 fn tab_fetched_at(state: &TabState) -> Option<Instant> {
@@ -160,7 +237,7 @@ fn draw(
     active: usize,
     tabs: &[TabState],
     interval: Duration,
-) -> Result<()> {
+) -> Result<ClickMap> {
     let terminal_width = terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
     let inner_width = terminal_width.saturating_sub(4).max(MIN_INNER_WIDTH);
     let now_ms = Utc::now().timestamp_millis();
@@ -173,12 +250,18 @@ fn draw(
         }
     };
 
-    let mut screen = String::new();
-    screen.push_str(&format_header(updated_at_ms, secs_ago, interval.as_secs()));
-    screen.push_str("\n\n");
-    if let Some(bar) = render_tab_bar(providers, active) {
-        screen.push_str(&bar);
-        screen.push_str("\n\n");
+    let mut lines: Vec<String> = Vec::new();
+    let mut click = ClickMap::default();
+
+    lines.push(format_header(updated_at_ms, secs_ago, interval.as_secs()));
+    lines.push(String::new());
+
+    if let Some((bar, spans)) = tab_bar_layout(providers, active) {
+        click.has_tabs = true;
+        click.tab_row = lines.len() as u16;
+        click.tabs = spans;
+        lines.push(bar);
+        lines.push(String::new());
     }
 
     let (title, body_lines) = match &tabs[active] {
@@ -192,43 +275,55 @@ fn draw(
             message.lines().map(|l| l.to_string()).collect(),
         ),
     };
-    screen.push_str(&render_box(
-        &title,
-        &body_lines,
-        inner_width,
-        providers[active].color(),
-    ));
+    let boxed = render_box(&title, &body_lines, inner_width, providers[active].color());
+    for line in boxed.lines() {
+        lines.push(line.to_string());
+    }
 
+    // Footer: a blank spacer row, then the right-aligned hints.
+    lines.push(String::new());
     let cooldown =
         tab_fetched_at(&tabs[active]).and_then(|at| refresh_cooldown_remaining(Instant::now(), at));
-    screen.push_str(&render_refresh_prompt(cooldown));
+    let footer = render_footer(terminal_width, cooldown.map(cooldown_display_seconds));
+    click.has_footer = true;
+    click.footer_row = lines.len() as u16;
+    click.refresh = footer.refresh;
+    click.quit = footer.quit;
+    lines.push(footer.line);
 
+    let screen = lines.join("\n");
+    queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
+    write!(out, "{}", normalize_raw_mode_newlines(&screen))?;
+    out.flush()?;
+    Ok(click)
+}
+
+fn draw_no_providers(out: &mut impl Write, body: &str) -> Result<()> {
+    let terminal_width = terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
+    let footer = render_footer(terminal_width, None);
+    let screen = format!("{body}\n{}", footer.line);
     queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
     write!(out, "{}", normalize_raw_mode_newlines(&screen))?;
     out.flush()?;
     Ok(())
 }
 
-fn draw_no_providers(out: &mut impl Write, body: &str) -> Result<()> {
-    queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
-    write!(out, "{}", normalize_raw_mode_newlines(body))?;
-    write!(
-        out,
-        "{}",
-        normalize_raw_mode_newlines(&render_refresh_prompt(None))
-    )?;
-    out.flush()?;
-    Ok(())
-}
-
 fn wait_for_quit() -> Result<()> {
     loop {
-        if event::poll(Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
-        {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        if event::poll(Duration::from_millis(250))? {
+            match event::read()? {
+                Event::Key(key) => match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Ok(());
+                    }
+                    _ => {}
+                },
+                // The only action on the no-providers screen is to quit, so any
+                // left click dismisses it.
+                Event::Mouse(mouse)
+                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
+                {
                     return Ok(());
                 }
                 _ => {}
@@ -244,17 +339,6 @@ pub fn refresh_cooldown_remaining(now: Instant, refreshed_at: Instant) -> Option
     } else {
         Some(REFRESH_COOLDOWN - elapsed)
     }
-}
-
-pub fn render_refresh_prompt(cooldown: Option<Duration>) -> String {
-    let refresh = match cooldown {
-        Some(remaining) => format!(
-            "\u{1b}[90m[R]efresh {}s\u{1b}[0m",
-            cooldown_display_seconds(remaining)
-        ),
-        None => "\u{1b}[32m[R]efresh\u{1b}[0m".to_string(),
-    };
-    format!("\n{refresh}   [Q]uit\n")
 }
 
 pub fn should_fetch(last_fetch_elapsed: Option<Duration>, interval: Duration) -> bool {

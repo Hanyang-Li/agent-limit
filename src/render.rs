@@ -189,16 +189,35 @@ fn format_clock(now_ms: i64) -> String {
     format!("{} ({timezone})", local.format("%H:%M:%S"))
 }
 
-pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
+/// Column span [start, end) of a clickable tab within the tab bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabSpan {
+    pub index: usize,
+    pub start: u16,
+    pub end: u16,
+}
+
+/// Render the tab bar and report each tab's clickable column span. Returns
+/// `None` (no bar) when only one provider is present.
+pub fn tab_bar_layout(providers: &[Provider], active: usize) -> Option<(String, Vec<TabSpan>)> {
     if providers.len() <= 1 {
         return None;
     }
     let mut bar = String::new();
+    let mut spans = Vec::with_capacity(providers.len());
+    let mut col: usize = 0;
     for (index, provider) in providers.iter().enumerate() {
         if index > 0 {
             bar.push_str("  ");
+            col += 2;
         }
         let label = format!(" {provider} ");
+        let width = label.chars().count();
+        spans.push(TabSpan {
+            index,
+            start: col as u16,
+            end: (col + width) as u16,
+        });
         if index == active {
             // Selected tab: a solid brand-color block with knocked-out letters
             // (reverse-video on the brand color shows the terminal background
@@ -210,8 +229,60 @@ pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
         } else {
             bar.push_str(&label);
         }
+        col += width;
     }
-    Some(bar)
+    Some((bar, spans))
+}
+
+pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
+    tab_bar_layout(providers, active).map(|(bar, _)| bar)
+}
+
+/// A right-aligned `[R]efresh   [Q]uit` footer plus the clickable column spans
+/// of each hint (in the visible coordinate space of the rendered line).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FooterLayout {
+    pub line: String,
+    pub refresh: (u16, u16),
+    pub quit: (u16, u16),
+}
+
+/// Build the footer, right-aligned to `terminal_width`. `cooldown_secs` shows a
+/// gray countdown when refresh is cooling down, green `[R]efresh` when ready.
+pub fn render_footer(terminal_width: usize, cooldown_secs: Option<u64>) -> FooterLayout {
+    let refresh_label = match cooldown_secs {
+        Some(seconds) => format!("[R]efresh {seconds}s"),
+        None => "[R]efresh".to_string(),
+    };
+    let quit_label = "[Q]uit";
+    let gap = 3usize;
+
+    let refresh_len = refresh_label.chars().count();
+    let quit_len = quit_label.chars().count();
+    let visible = refresh_len + gap + quit_len;
+    let pad = terminal_width.saturating_sub(visible);
+
+    let refresh = (pad as u16, (pad + refresh_len) as u16);
+    let quit_start = pad + refresh_len + gap;
+    let quit = (quit_start as u16, (quit_start + quit_len) as u16);
+
+    let refresh_colored = match cooldown_secs {
+        Some(_) => format!("\u{1b}[90m{refresh_label}\u{1b}[0m"),
+        None => format!("\u{1b}[32m{refresh_label}\u{1b}[0m"),
+    };
+    let line = format!(
+        "{}{}{}{}",
+        " ".repeat(pad),
+        refresh_colored,
+        " ".repeat(gap),
+        quit_label
+    );
+
+    FooterLayout {
+        line,
+        refresh,
+        quit,
+    }
 }
 
 pub fn visible_width(text: &str) -> usize {

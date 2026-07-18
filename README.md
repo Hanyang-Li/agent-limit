@@ -47,7 +47,7 @@ or `AGENT_LIMIT_INSTALL_DIR`.
 Or install with Cargo:
 
 ```sh
-cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.2 --locked
+cargo install --git https://github.com/Hanyang-Li/agent-limit --tag v0.2.3 --locked
 ```
 
 ## Usage
@@ -80,6 +80,9 @@ first available one; the tab order stays Claude, then Kimi.
 | `h` / `←`, `l` / `→` | Switch tab (when both providers are present) |
 | `R` | Refresh the active tab now (honors a short cooldown) |
 | `Q` | Quit (`Esc` and `Ctrl+C` also quit) |
+
+You can also use the **mouse**: click a tab to switch to it, or click the
+**[R]efresh** / **[Q]uit** hints in the bottom-right.
 
 ## Development
 
