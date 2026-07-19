@@ -8,7 +8,7 @@ use crate::render::{
 };
 use anyhow::Result;
 use chrono::Utc;
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
     MouseEventKind,
@@ -26,14 +26,14 @@ struct RawModeGuard;
 impl RawModeGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        execute!(stdout(), EnableMouseCapture)?;
+        execute!(stdout(), EnableMouseCapture, Hide)?;
         Ok(Self)
     }
 }
 
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
-        let _ = execute!(stdout(), DisableMouseCapture);
+        let _ = execute!(stdout(), Show, DisableMouseCapture);
         let _ = disable_raw_mode();
     }
 }
