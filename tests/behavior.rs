@@ -551,15 +551,15 @@ fn inactive_tabs_are_gray_and_turn_white_on_hover() {
 
     let (plain, spans) = tab_bar_layout(&providers, 0, None).expect("two providers");
     assert!(
-        plain.contains("\u{1b}[38;2;105;105;105m Kimi \u{1b}[0m"),
+        plain.contains("\u{1b}[38;2;165;175;200m Kimi \u{1b}[0m"),
         "inactive tab should be gray, got: {plain:?}"
     );
 
     let (hovered, hover_spans) =
         tab_bar_layout(&providers, 0, Some(HoverTarget::Tab(1))).expect("two providers");
     assert!(
-        hovered.contains("\u{1b}[97m Kimi \u{1b}[0m"),
-        "hovered tab should turn white, got: {hovered:?}"
+        hovered.contains("\u{1b}[39m Kimi \u{1b}[0m"),
+        "hovered tab should use the default foreground white, got: {hovered:?}"
     );
     // Hover must not shift the clickable spans.
     assert_eq!(spans, hover_spans);
@@ -592,34 +592,34 @@ fn footer_cooldown_shifts_alignment_and_shows_seconds() {
 
 #[test]
 fn footer_hint_colors_follow_clickability_and_hover() {
-    // Ready: refresh light green, quit gray.
+    // Ready: refresh muted green, quit gray.
     let ready = render_footer(40, None, None);
     assert!(
         ready
             .line
-            .contains("\u{1b}[38;2;144;238;144m[R]efresh\u{1b}[0m"),
-        "ready refresh should be light green, got: {:?}",
+            .contains("\u{1b}[38;2;140;195;140m[R]efresh\u{1b}[0m"),
+        "ready refresh should be muted green, got: {:?}",
         ready.line
     );
     assert!(
         ready
             .line
-            .contains("\u{1b}[38;2;105;105;105m[Q]uit\u{1b}[0m"),
+            .contains("\u{1b}[38;2;165;175;200m[Q]uit\u{1b}[0m"),
         "quit should be gray, got: {:?}",
         ready.line
     );
 
-    // Hover: refresh turns green, quit turns white.
+    // Hover: refresh turns the same green as the progress text, quit white.
     let hover_refresh = render_footer(40, None, Some(HoverTarget::Refresh));
     assert!(
         hover_refresh.line.contains("\u{1b}[32m[R]efresh\u{1b}[0m"),
-        "hovered refresh should turn green, got: {:?}",
+        "hovered refresh should match the progress green, got: {:?}",
         hover_refresh.line
     );
     let hover_quit = render_footer(40, None, Some(HoverTarget::Quit));
     assert!(
-        hover_quit.line.contains("\u{1b}[97m[Q]uit\u{1b}[0m"),
-        "hovered quit should turn white, got: {:?}",
+        hover_quit.line.contains("\u{1b}[39m[Q]uit\u{1b}[0m"),
+        "hovered quit should use the default foreground white, got: {:?}",
         hover_quit.line
     );
 
@@ -628,7 +628,7 @@ fn footer_hint_colors_follow_clickability_and_hover() {
     assert!(
         cooldown
             .line
-            .contains("\u{1b}[38;2;105;105;105m[R]efresh 12s\u{1b}[0m"),
+            .contains("\u{1b}[38;2;165;175;200m[R]efresh 12s\u{1b}[0m"),
         "cooling-down refresh should stay gray, got: {:?}",
         cooldown.line
     );

@@ -9,10 +9,16 @@ const BOLD: &str = "\u{1b}[1m";
 const NOT_BOLD: &str = "\u{1b}[22m";
 const REVERSE: &str = "\u{1b}[7m";
 
-// Hint colors (truecolor): a dim gray noticeably darker than 90m, and a pale
-// green lighter than the 92m bright green.
-const GRAY: &str = "\u{1b}[38;2;105;105;105m";
-const LIGHT_GREEN: &str = "\u{1b}[38;2;144;238;144m";
+// Hint colors, two tiers designed around the progress colors. Bright tier
+// (hover) uses theme colors: 39m (the terminal's default foreground — the same
+// white as the body text, which can be brighter than 97m) and the same 32m
+// green as the progress text. Dim tier (normal) is truecolor at matched
+// perceived brightness: a cool blue-leaning gray close to white (matching the
+// bluish gray of the progress bar's ░ track), and a muted green shifted toward
+// that gray and slightly darker than the hover green.
+const WHITE: &str = "\u{1b}[39m";
+const GRAY: &str = "\u{1b}[38;2;165;175;200m";
+const DIM_GREEN: &str = "\u{1b}[38;2;140;195;140m";
 
 fn fg_color((r, g, b): (u8, u8, u8)) -> String {
     format!("\u{1b}[38;2;{r};{g};{b}m")
@@ -245,7 +251,7 @@ pub fn tab_bar_layout(
             bar.push_str(&label);
             bar.push_str(RESET);
         } else if hover == Some(HoverTarget::Tab(index)) {
-            bar.push_str("\u{1b}[97m");
+            bar.push_str(WHITE);
             bar.push_str(&label);
             bar.push_str(RESET);
         } else {
@@ -273,8 +279,8 @@ pub struct FooterLayout {
 
 /// Build the footer, right-aligned to `terminal_width`. `cooldown_secs` shows a
 /// gray countdown when refresh is cooling down (no hover feedback: it is not
-/// clickable); when ready, `[R]efresh` is light green and turns green on hover.
-/// `[Q]uit` is gray and turns white on hover.
+/// clickable); when ready, `[R]efresh` is muted green and turns the progress
+/// text's green on hover. `[Q]uit` is gray and turns white on hover.
 pub fn render_footer(
     terminal_width: usize,
     cooldown_secs: Option<u64>,
@@ -301,10 +307,10 @@ pub fn render_footer(
         None if hover == Some(HoverTarget::Refresh) => {
             format!("\u{1b}[32m{refresh_label}{RESET}")
         }
-        None => format!("{LIGHT_GREEN}{refresh_label}{RESET}"),
+        None => format!("{DIM_GREEN}{refresh_label}{RESET}"),
     };
     let quit_colored = if hover == Some(HoverTarget::Quit) {
-        format!("\u{1b}[97m{quit_label}{RESET}")
+        format!("{WHITE}{quit_label}{RESET}")
     } else {
         format!("{GRAY}{quit_label}{RESET}")
     };
