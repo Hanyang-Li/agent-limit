@@ -4,7 +4,8 @@ use crate::provider::{
     Provider, ProviderSnapshot, TabState, available_providers, initial_active_index,
 };
 use crate::render::{
-    TabSpan, format_header, render_box, render_footer, render_provider_body, tab_bar_layout,
+    HoverTarget, TabSpan, format_header, render_box, render_footer, render_provider_body,
+    tab_bar_layout,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -68,6 +69,17 @@ impl ClickMap {
     fn is_quit(&self, col: u16, row: u16) -> bool {
         self.has_footer && row == self.footer_row && col >= self.quit.0 && col < self.quit.1
     }
+
+    /// Clickable element under `(col, row)`, if any — used for hover feedback.
+    fn hover_at(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        if self.is_quit(col, row) {
+            Some(HoverTarget::Quit)
+        } else if self.is_refresh(col, row) {
+            Some(HoverTarget::Refresh)
+        } else {
+            self.tab_at(col, row).map(HoverTarget::Tab)
+        }
+    }
 }
 
 fn fetch_provider(provider: Provider) -> Result<ProviderSnapshot> {
@@ -108,10 +120,11 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
 
     let mut active = initial_active_index(&providers, requested);
     let mut tabs: Vec<TabState> = providers.iter().map(|_| TabState::Empty).collect();
+    let mut hover: Option<HoverTarget> = None;
 
     // Startup: fetch active tab.
     tabs[active] = refresh_tab(providers[active]);
-    let mut click = draw(&mut out, &providers, active, &tabs, interval)?;
+    let mut click = draw(&mut out, &providers, active, &tabs, interval, hover)?;
 
     let mut last_tick_secs = None;
     loop {
@@ -119,13 +132,13 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
         let elapsed = tab_elapsed(&tabs[active]);
         if should_fetch(elapsed, interval) && !matches!(tabs[active], TabState::Empty) {
             tabs[active] = refresh_tab(providers[active]);
-            click = draw(&mut out, &providers, active, &tabs, interval)?;
+            click = draw(&mut out, &providers, active, &tabs, interval, hover)?;
         }
 
         // Re-draw ~1s for the "N s ago" and cooldown countdown.
         let tick = tab_secs_ago(&tabs[active]);
         if tick != last_tick_secs {
-            click = draw(&mut out, &providers, active, &tabs, interval)?;
+            click = draw(&mut out, &providers, active, &tabs, interval, hover)?;
             last_tick_secs = tick;
         }
 
@@ -151,8 +164,8 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
                     }
                     _ => {}
                 },
-                Event::Mouse(mouse) => {
-                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
                         let (col, row) = (mouse.column, mouse.row);
                         if click.is_quit(col, row) {
                             break;
@@ -166,12 +179,21 @@ pub fn run(interval_seconds: u64, requested: Provider) -> Result<()> {
                             dirty = true;
                         }
                     }
-                }
+                    // Redraw only when the hovered target changes.
+                    MouseEventKind::Moved => {
+                        let next = click.hover_at(mouse.column, mouse.row);
+                        if next != hover {
+                            hover = next;
+                            dirty = true;
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
 
             if dirty {
-                click = draw(&mut out, &providers, active, &tabs, interval)?;
+                click = draw(&mut out, &providers, active, &tabs, interval, hover)?;
                 last_tick_secs = tab_secs_ago(&tabs[active]);
             }
         }
@@ -237,6 +259,7 @@ fn draw(
     active: usize,
     tabs: &[TabState],
     interval: Duration,
+    hover: Option<HoverTarget>,
 ) -> Result<ClickMap> {
     let terminal_width = terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
     let inner_width = terminal_width.saturating_sub(4).max(MIN_INNER_WIDTH);
@@ -256,7 +279,7 @@ fn draw(
     lines.push(format_header(updated_at_ms, secs_ago, interval.as_secs()));
     lines.push(String::new());
 
-    if let Some((bar, spans)) = tab_bar_layout(providers, active) {
+    if let Some((bar, spans)) = tab_bar_layout(providers, active, hover) {
         click.has_tabs = true;
         click.tab_row = lines.len() as u16;
         click.tabs = spans;
@@ -284,7 +307,7 @@ fn draw(
     lines.push(String::new());
     let cooldown =
         tab_fetched_at(&tabs[active]).and_then(|at| refresh_cooldown_remaining(Instant::now(), at));
-    let footer = render_footer(terminal_width, cooldown.map(cooldown_display_seconds));
+    let footer = render_footer(terminal_width, cooldown.map(cooldown_display_seconds), hover);
     click.has_footer = true;
     click.footer_row = lines.len() as u16;
     click.refresh = footer.refresh;
@@ -300,7 +323,7 @@ fn draw(
 
 fn draw_no_providers(out: &mut impl Write, body: &str) -> Result<()> {
     let terminal_width = terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
-    let footer = render_footer(terminal_width, None);
+    let footer = render_footer(terminal_width, None, None);
     let screen = format!("{body}\n{}", footer.line);
     queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
     write!(out, "{}", normalize_raw_mode_newlines(&screen))?;

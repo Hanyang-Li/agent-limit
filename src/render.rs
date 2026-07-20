@@ -197,9 +197,22 @@ pub struct TabSpan {
     pub end: u16,
 }
 
+/// Clickable element currently under the mouse pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverTarget {
+    Tab(usize),
+    Refresh,
+    Quit,
+}
+
 /// Render the tab bar and report each tab's clickable column span. Returns
-/// `None` (no bar) when only one provider is present.
-pub fn tab_bar_layout(providers: &[Provider], active: usize) -> Option<(String, Vec<TabSpan>)> {
+/// `None` (no bar) when only one provider is present. Inactive tabs are gray;
+/// the hovered one turns white. The active tab keeps its brand-color block.
+pub fn tab_bar_layout(
+    providers: &[Provider],
+    active: usize,
+    hover: Option<HoverTarget>,
+) -> Option<(String, Vec<TabSpan>)> {
     if providers.len() <= 1 {
         return None;
     }
@@ -226,8 +239,14 @@ pub fn tab_bar_layout(providers: &[Provider], active: usize) -> Option<(String, 
             bar.push_str(REVERSE);
             bar.push_str(&label);
             bar.push_str(RESET);
-        } else {
+        } else if hover == Some(HoverTarget::Tab(index)) {
+            bar.push_str("\u{1b}[97m");
             bar.push_str(&label);
+            bar.push_str(RESET);
+        } else {
+            bar.push_str("\u{1b}[90m");
+            bar.push_str(&label);
+            bar.push_str(RESET);
         }
         col += width;
     }
@@ -235,7 +254,7 @@ pub fn tab_bar_layout(providers: &[Provider], active: usize) -> Option<(String, 
 }
 
 pub fn render_tab_bar(providers: &[Provider], active: usize) -> Option<String> {
-    tab_bar_layout(providers, active).map(|(bar, _)| bar)
+    tab_bar_layout(providers, active, None).map(|(bar, _)| bar)
 }
 
 /// A right-aligned `[R]efresh   [Q]uit` footer plus the clickable column spans
@@ -248,8 +267,14 @@ pub struct FooterLayout {
 }
 
 /// Build the footer, right-aligned to `terminal_width`. `cooldown_secs` shows a
-/// gray countdown when refresh is cooling down, green `[R]efresh` when ready.
-pub fn render_footer(terminal_width: usize, cooldown_secs: Option<u64>) -> FooterLayout {
+/// gray countdown when refresh is cooling down (no hover feedback: it is not
+/// clickable); when ready, `[R]efresh` is light green and turns green on hover.
+/// `[Q]uit` is gray and turns white on hover.
+pub fn render_footer(
+    terminal_width: usize,
+    cooldown_secs: Option<u64>,
+    hover: Option<HoverTarget>,
+) -> FooterLayout {
     let refresh_label = match cooldown_secs {
         Some(seconds) => format!("[R]efresh {seconds}s"),
         None => "[R]efresh".to_string(),
@@ -268,14 +293,22 @@ pub fn render_footer(terminal_width: usize, cooldown_secs: Option<u64>) -> Foote
 
     let refresh_colored = match cooldown_secs {
         Some(_) => format!("\u{1b}[90m{refresh_label}\u{1b}[0m"),
-        None => format!("\u{1b}[32m{refresh_label}\u{1b}[0m"),
+        None if hover == Some(HoverTarget::Refresh) => {
+            format!("\u{1b}[32m{refresh_label}\u{1b}[0m")
+        }
+        None => format!("\u{1b}[92m{refresh_label}\u{1b}[0m"),
+    };
+    let quit_colored = if hover == Some(HoverTarget::Quit) {
+        format!("\u{1b}[97m{quit_label}\u{1b}[0m")
+    } else {
+        format!("\u{1b}[90m{quit_label}\u{1b}[0m")
     };
     let line = format!(
         "{}{}{}{}",
         " ".repeat(pad),
         refresh_colored,
         " ".repeat(gap),
-        quit_label
+        quit_colored
     );
 
     FooterLayout {

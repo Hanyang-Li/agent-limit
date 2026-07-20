@@ -475,7 +475,7 @@ fn refresh_request_form_has_client_id_and_grant() {
 
 use agent_limit::provider::Provider as RenderProvider;
 use agent_limit::render::{
-    format_frequency, format_header, render_box, render_footer, render_provider_body,
+    HoverTarget, format_frequency, format_header, render_box, render_footer, render_provider_body,
     render_tab_bar, tab_bar_layout, visible_width,
 };
 
@@ -533,10 +533,10 @@ fn tab_bar_absent_for_single_provider_and_highlights_active() {
 
 #[test]
 fn tab_bar_layout_reports_click_spans() {
-    assert!(tab_bar_layout(&[RenderProvider::Claude], 0).is_none());
+    assert!(tab_bar_layout(&[RenderProvider::Claude], 0, None).is_none());
 
-    let (bar, spans) =
-        tab_bar_layout(&[RenderProvider::Claude, RenderProvider::Kimi], 0).expect("two providers");
+    let (bar, spans) = tab_bar_layout(&[RenderProvider::Claude, RenderProvider::Kimi], 0, None)
+        .expect("two providers");
     assert_eq!(spans.len(), 2);
     // " Claude " occupies columns [0, 8).
     assert_eq!((spans[0].index, spans[0].start, spans[0].end), (0, 0, 8));
@@ -546,8 +546,33 @@ fn tab_bar_layout_reports_click_spans() {
 }
 
 #[test]
+fn inactive_tabs_are_gray_and_turn_white_on_hover() {
+    let providers = [RenderProvider::Claude, RenderProvider::Kimi];
+
+    let (plain, spans) = tab_bar_layout(&providers, 0, None).expect("two providers");
+    assert!(
+        plain.contains("\u{1b}[90m Kimi \u{1b}[0m"),
+        "inactive tab should be gray, got: {plain:?}"
+    );
+
+    let (hovered, hover_spans) =
+        tab_bar_layout(&providers, 0, Some(HoverTarget::Tab(1))).expect("two providers");
+    assert!(
+        hovered.contains("\u{1b}[97m Kimi \u{1b}[0m"),
+        "hovered tab should turn white, got: {hovered:?}"
+    );
+    // Hover must not shift the clickable spans.
+    assert_eq!(spans, hover_spans);
+
+    // Hovering the active tab changes nothing (it keeps the brand block).
+    let (active_hover, _) =
+        tab_bar_layout(&providers, 0, Some(HoverTarget::Tab(0))).expect("two providers");
+    assert_eq!(active_hover, plain);
+}
+
+#[test]
 fn footer_is_right_aligned_with_click_spans() {
-    let footer = render_footer(40, None);
+    let footer = render_footer(40, None, None);
     // "[R]efresh"=9, gap=3, "[Q]uit"=6 → visible 18, pad 22, quit ends at width.
     assert_eq!(footer.refresh, (22, 31));
     assert_eq!(footer.quit, (34, 40));
@@ -558,11 +583,49 @@ fn footer_is_right_aligned_with_click_spans() {
 
 #[test]
 fn footer_cooldown_shifts_alignment_and_shows_seconds() {
-    let footer = render_footer(40, Some(12));
+    let footer = render_footer(40, Some(12), None);
     // "[R]efresh 12s"=13, gap=3, "[Q]uit"=6 → visible 22, pad 18.
     assert_eq!(footer.refresh, (18, 31));
     assert_eq!(footer.quit, (34, 40));
     assert!(footer.line.contains("[R]efresh 12s"));
+}
+
+#[test]
+fn footer_hint_colors_follow_clickability_and_hover() {
+    // Ready: refresh light green, quit gray.
+    let ready = render_footer(40, None, None);
+    assert!(
+        ready.line.contains("\u{1b}[92m[R]efresh\u{1b}[0m"),
+        "ready refresh should be light green, got: {:?}",
+        ready.line
+    );
+    assert!(
+        ready.line.contains("\u{1b}[90m[Q]uit\u{1b}[0m"),
+        "quit should be gray, got: {:?}",
+        ready.line
+    );
+
+    // Hover: refresh turns green, quit turns white.
+    let hover_refresh = render_footer(40, None, Some(HoverTarget::Refresh));
+    assert!(
+        hover_refresh.line.contains("\u{1b}[32m[R]efresh\u{1b}[0m"),
+        "hovered refresh should turn green, got: {:?}",
+        hover_refresh.line
+    );
+    let hover_quit = render_footer(40, None, Some(HoverTarget::Quit));
+    assert!(
+        hover_quit.line.contains("\u{1b}[97m[Q]uit\u{1b}[0m"),
+        "hovered quit should turn white, got: {:?}",
+        hover_quit.line
+    );
+
+    // Cooling down: refresh stays gray even when hovered (not clickable).
+    let cooldown = render_footer(40, Some(12), Some(HoverTarget::Refresh));
+    assert!(
+        cooldown.line.contains("\u{1b}[90m[R]efresh 12s\u{1b}[0m"),
+        "cooling-down refresh should stay gray, got: {:?}",
+        cooldown.line
+    );
 }
 
 #[test]
