@@ -9,6 +9,11 @@ const BOLD: &str = "\u{1b}[1m";
 const NOT_BOLD: &str = "\u{1b}[22m";
 const REVERSE: &str = "\u{1b}[7m";
 
+// Hint colors (truecolor): a dim gray noticeably darker than 90m, and a pale
+// green lighter than the 92m bright green.
+const GRAY: &str = "\u{1b}[38;2;105;105;105m";
+const LIGHT_GREEN: &str = "\u{1b}[38;2;144;238;144m";
+
 fn fg_color((r, g, b): (u8, u8, u8)) -> String {
     format!("\u{1b}[38;2;{r};{g};{b}m")
 }
@@ -244,7 +249,7 @@ pub fn tab_bar_layout(
             bar.push_str(&label);
             bar.push_str(RESET);
         } else {
-            bar.push_str("\u{1b}[90m");
+            bar.push_str(GRAY);
             bar.push_str(&label);
             bar.push_str(RESET);
         }
@@ -292,16 +297,16 @@ pub fn render_footer(
     let quit = (quit_start as u16, (quit_start + quit_len) as u16);
 
     let refresh_colored = match cooldown_secs {
-        Some(_) => format!("\u{1b}[90m{refresh_label}\u{1b}[0m"),
+        Some(_) => format!("{GRAY}{refresh_label}{RESET}"),
         None if hover == Some(HoverTarget::Refresh) => {
-            format!("\u{1b}[32m{refresh_label}\u{1b}[0m")
+            format!("\u{1b}[32m{refresh_label}{RESET}")
         }
-        None => format!("\u{1b}[92m{refresh_label}\u{1b}[0m"),
+        None => format!("{LIGHT_GREEN}{refresh_label}{RESET}"),
     };
     let quit_colored = if hover == Some(HoverTarget::Quit) {
-        format!("\u{1b}[97m{quit_label}\u{1b}[0m")
+        format!("\u{1b}[97m{quit_label}{RESET}")
     } else {
-        format!("\u{1b}[90m{quit_label}\u{1b}[0m")
+        format!("{GRAY}{quit_label}{RESET}")
     };
     let line = format!(
         "{}{}{}{}",

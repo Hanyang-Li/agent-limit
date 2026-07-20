@@ -551,7 +551,7 @@ fn inactive_tabs_are_gray_and_turn_white_on_hover() {
 
     let (plain, spans) = tab_bar_layout(&providers, 0, None).expect("two providers");
     assert!(
-        plain.contains("\u{1b}[90m Kimi \u{1b}[0m"),
+        plain.contains("\u{1b}[38;2;105;105;105m Kimi \u{1b}[0m"),
         "inactive tab should be gray, got: {plain:?}"
     );
 
@@ -595,12 +595,16 @@ fn footer_hint_colors_follow_clickability_and_hover() {
     // Ready: refresh light green, quit gray.
     let ready = render_footer(40, None, None);
     assert!(
-        ready.line.contains("\u{1b}[92m[R]efresh\u{1b}[0m"),
+        ready
+            .line
+            .contains("\u{1b}[38;2;144;238;144m[R]efresh\u{1b}[0m"),
         "ready refresh should be light green, got: {:?}",
         ready.line
     );
     assert!(
-        ready.line.contains("\u{1b}[90m[Q]uit\u{1b}[0m"),
+        ready
+            .line
+            .contains("\u{1b}[38;2;105;105;105m[Q]uit\u{1b}[0m"),
         "quit should be gray, got: {:?}",
         ready.line
     );
@@ -622,7 +626,9 @@ fn footer_hint_colors_follow_clickability_and_hover() {
     // Cooling down: refresh stays gray even when hovered (not clickable).
     let cooldown = render_footer(40, Some(12), Some(HoverTarget::Refresh));
     assert!(
-        cooldown.line.contains("\u{1b}[90m[R]efresh 12s\u{1b}[0m"),
+        cooldown
+            .line
+            .contains("\u{1b}[38;2;105;105;105m[R]efresh 12s\u{1b}[0m"),
         "cooling-down refresh should stay gray, got: {:?}",
         cooldown.line
     );
