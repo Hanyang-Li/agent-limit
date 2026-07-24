@@ -35,8 +35,10 @@
 curl -fsSL https://raw.githubusercontent.com/Hanyang-Li/agent-limit/main/install.sh | sh
 ```
 
-脚本会下载发布二进制、校验其 checksum，并安装到 `/usr/local/bin`（可能提示输入 `sudo`
-密码）。可用 `AGENT_LIMIT_VERSION`、`AGENT_LIMIT_INSTALL_DIR` 覆盖默认行为。
+脚本会下载发布二进制、校验其 checksum，并安装到 `~/.local/bin`（无需 `sudo`）。
+若该目录不在 `PATH` 上，脚本会写入你的 shell 配置文件（zsh/bash/fish）。可用
+`AGENT_LIMIT_VERSION`、`AGENT_LIMIT_INSTALL_DIR` 覆盖默认行为，或设置
+`AGENT_LIMIT_NO_MODIFY_PATH=1` 跳过对 `PATH` 的修改。
 
 或使用 Cargo 安装：
 

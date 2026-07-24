@@ -1,6 +1,6 @@
 [package]
 name = "agent-limit"
-version = "0.2.5"
+version = "1.0.0"
 edition = "2024"
 description = "Live Claude Code and Kimi usage limits in your terminal, from local credentials."
 license = "MIT"

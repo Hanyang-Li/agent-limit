@@ -6,15 +6,56 @@
 #
 # Overrides (env):
 #   AGENT_LIMIT_VERSION       tag to install (default: latest release)
-#   AGENT_LIMIT_INSTALL_DIR   install directory (default: /usr/local/bin)
+#   AGENT_LIMIT_INSTALL_DIR   install directory (default: ~/.local/bin)
+#   AGENT_LIMIT_NO_MODIFY_PATH set to skip editing your shell rc; prints the
+#                             manual PATH instructions instead
 set -eu
 
 REPO="Hanyang-Li/agent-limit"
 BIN="agent-limit"
 TARGET="aarch64-apple-darwin"
-INSTALL_DIR="${AGENT_LIMIT_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${AGENT_LIMIT_INSTALL_DIR:-$HOME/.local/bin}"
 
 fail() { echo "agent-limit install: $*" >&2; exit 1; }
+
+# Print the manual PATH instructions (used as the opt-out / fallback path).
+path_hint() {
+  echo "Note: $INSTALL_DIR is not on your PATH. Add it with:"
+  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+  echo "Or run it directly: $INSTALL_DIR/$BIN"
+}
+
+# Put $INSTALL_DIR on PATH by appending to the user's shell rc, idempotently.
+# Honors AGENT_LIMIT_NO_MODIFY_PATH; unknown shells fall back to path_hint.
+ensure_on_path() {
+  if [ -n "${AGENT_LIMIT_NO_MODIFY_PATH:-}" ]; then
+    path_hint
+    return
+  fi
+
+  marker="# added by agent-limit installer"
+  case "$(basename "${SHELL:-}")" in
+    zsh)  rc="$HOME/.zshrc";                   line="export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
+    bash) rc="$HOME/.bash_profile";            line="export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
+    fish) rc="$HOME/.config/fish/config.fish"; line="fish_add_path $INSTALL_DIR" ;;
+    *)    path_hint; return ;;
+  esac
+
+  if [ -f "$rc" ] && grep -qF "$marker" "$rc" 2>/dev/null; then
+    echo "PATH already configured for agent-limit in $rc"
+    echo "Restart your shell or run: source $rc"
+    return
+  fi
+
+  mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+  if ! { printf '\n%s\n%s\n' "$marker" "$line" >> "$rc"; } 2>/dev/null; then
+    path_hint
+    return
+  fi
+
+  echo "Added $INSTALL_DIR to PATH in $rc"
+  echo "Restart your shell or run: source $rc"
+}
 
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -50,6 +91,10 @@ fi
 tar -xzf "$tmp/$ASSET" -C "$tmp"
 [ -f "$tmp/$BIN" ] || fail "archive did not contain $BIN"
 
+# Create the install dir without sudo first so the default user-local target
+# (~/.local/bin) needs no elevated privileges. Only fall back to sudo when the
+# dir still isn't writable (e.g. an overridden system dir like /usr/local/bin).
+mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 if [ -d "$INSTALL_DIR" ] && [ -w "$INSTALL_DIR" ]; then
   install -m 0755 "$tmp/$BIN" "$INSTALL_DIR/$BIN"
 else
@@ -61,5 +106,5 @@ fi
 echo "Installed $BIN $VERSION to $INSTALL_DIR/$BIN"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) echo "Run: $BIN" ;;
-  *) echo "Note: $INSTALL_DIR is not on your PATH; add it or run $INSTALL_DIR/$BIN" ;;
+  *) ensure_on_path ;;
 esac

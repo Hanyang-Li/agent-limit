@@ -41,8 +41,10 @@ curl -fsSL https://raw.githubusercontent.com/Hanyang-Li/agent-limit/main/install
 ```
 
 It downloads the release binary, verifies its checksum, and installs it to
-`/usr/local/bin` (may prompt for `sudo`). Override with `AGENT_LIMIT_VERSION`
-or `AGENT_LIMIT_INSTALL_DIR`.
+`~/.local/bin` (no `sudo` needed). If that directory isn't on your `PATH`, the
+script adds it to your shell rc (zsh/bash/fish). Override with
+`AGENT_LIMIT_VERSION` or `AGENT_LIMIT_INSTALL_DIR`, or set
+`AGENT_LIMIT_NO_MODIFY_PATH=1` to skip the `PATH` edit.
 
 Or install with Cargo:
 
